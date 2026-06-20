@@ -1,0 +1,13 @@
+# Nextflow
+.nextflow*
+work/
+results/
+*.log
+
+# refs / data should live outside the repo
+refs/
+data/
+*.bam
+*.fastq.gz
+*.fq.gz
+__pycache__/

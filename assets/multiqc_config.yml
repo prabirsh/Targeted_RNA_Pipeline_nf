@@ -1,0 +1,32 @@
+title: "RNA Panel Pipeline — QC Report"
+subtitle: "Targeted-panel transcriptome: QC, alignment, on-target metrics, fusion, expression"
+intro_text: >
+  Aggregated quality control for the targeted RNA panel run. Review the sample, library,
+  alignment, capture on-target, and degradation metrics before clinical interpretation.
+
+report_header_info:
+  - Pipeline: "rna-panel-pipeline v1.0"
+  - Assay: "Targeted RNA panel (transcriptome)"
+
+module_order:
+  - fastqc
+  - fastp
+  - star
+  - picard
+  - rseqc
+  - featureCounts
+
+table_columns_visible:
+  Picard:
+    PCT_RIBOSOMAL_BASES: True
+    PCT_MRNA_BASES: True
+    MEDIAN_5PRIME_TO_3PRIME_BIAS: True
+  STAR:
+    uniquely_mapped_percent: True
+
+# Flag thresholds (tune at validation). MultiQC will color these columns.
+table_cond_formatting_rules:
+  uniquely_mapped_percent:
+    pass: [{ gt: 70 }]
+    warn: [{ lt: 70 }]
+    fail: [{ lt: 50 }]

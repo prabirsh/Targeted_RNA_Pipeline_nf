@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RNA Panel Pipeline — Data Flow</title>
+<style>
+  body { margin:0; background:#f7f8fa; font-family:Arial, Helvetica, sans-serif; color:#222; }
+  .wrap { max-width:1180px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:22px; color:#1f3864; margin:0 0 4px; }
+  p.sub { color:#555; margin:0 0 18px; font-size:14px; }
+  svg { width:100%; height:auto; display:block; }
+  .note { font-size:13px; color:#444; line-height:1.6; margin-top:18px; }
+  .note b { color:#1f3864; }
+  code { background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>RNA Panel Pipeline — File-level Data Flow</h1>
+<p class="sub">Each blue box is a tool (process). Amber chips are files it writes. Green chips are final deliverables. Follow an arrow to see where a file is consumed next. ★ = targeted-panel-specific.</p>
+
+<svg viewBox="0 0 1120 700" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d">
+  <title id="t">RNA panel pipeline data flow</title>
+  <desc id="d">Samplesheet and FASTQ flow through trimming and STAR alignment; the BAM fans out to QC, expression and fusion tools; fusion calls are reconciled and all QC is aggregated into one MultiQC report.</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6b85"/>
+    </marker>
+    <style>
+      .tool  { fill:#1f3864; }
+      .tool2 { fill:#2e75b6; }
+      .tlbl  { fill:#ffffff; font:600 12px Arial; }
+      .tsub  { fill:#cdd8ea; font:10px Arial; }
+      .file  { fill:#fdf3e0; stroke:#c79a2a; }
+      .flbl  { fill:#6b5212; font:10px Arial; }
+      .final { fill:#e3f0d8; stroke:#548235; }
+      .fnl   { fill:#2e5012; font:600 11px Arial; }
+      .edge  { stroke:#5b6b85; stroke-width:1.5; fill:none; }
+      .edgel { fill:#8a4b00; font:italic 9.5px Arial; }
+      .band  { fill:#eef1f6; }
+      .star  { fill:#c00000; font:700 11px Arial; }
+      .cap   { fill:#555; font:italic 10px Arial; }
+    </style>
+  </defs>
+
+  <!-- ===================== TOP TRUNK (linear core) ===================== -->
+  <!-- samplesheet chip -->
+  <rect class="file" x="455" y="14" width="210" height="26" rx="6"/>
+  <text class="flbl" x="560" y="31" text-anchor="middle">samplesheet.csv  (sample, fastq_1/2, strand)</text>
+  <path class="edge" d="M560,40 L560,54" marker-end="url(#arr)"/>
+
+  <!-- CHECK_SAMPLESHEET -->
+  <rect class="tool" x="448" y="56" width="224" height="34" rx="7"/>
+  <text class="tlbl" x="560" y="73" text-anchor="middle">CHECK_SAMPLESHEET</text>
+  <text class="tsub" x="560" y="85" text-anchor="middle">check_samplesheet.py — validate</text>
+  <path class="edge" d="M560,90 L560,104" marker-end="url(#arr)"/>
+  <text class="edgel" x="568" y="100">samplesheet.valid.csv → read channel</text>
+
+  <!-- FASTP / FASTQC -->
+  <rect class="tool2" x="448" y="106" width="224" height="34" rx="7"/>
+  <text class="tlbl" x="560" y="123" text-anchor="middle">FASTP  +  FASTQC</text>
+  <text class="tsub" x="560" y="135" text-anchor="middle">adapter/polyG trim · raw QC</text>
+  <path class="edge" d="M560,140 L560,154" marker-end="url(#arr)"/>
+  <text class="edgel" x="568" y="150">*.trim.fastq.gz</text>
+  <text class="cap" x="438" y="128" text-anchor="end">fastqc.zip,</text>
+  <text class="cap" x="438" y="140" text-anchor="end">fastp.json → MultiQC</text>
+
+  <!-- STAR_ALIGN -->
+  <rect class="tool" x="448" y="156" width="224" height="38" rx="7"/>
+  <text class="tlbl" x="560" y="174" text-anchor="middle">STAR_ALIGN  (2-pass)</text>
+  <text class="tsub" x="560" y="187" text-anchor="middle">splice-aware align · chimeric in-BAM</text>
+
+  <!-- STAR output chips -->
+  <path class="edge" d="M520,194 L470,214" marker-end="url(#arr)"/>
+  <path class="edge" d="M600,194 L650,214" marker-end="url(#arr)"/>
+  <rect class="file" x="350" y="216" width="232" height="26" rx="6"/>
+  <text class="flbl" x="466" y="233" text-anchor="middle">Aligned.sortedByCoord.out.bam</text>
+  <rect class="file" x="600" y="216" width="210" height="26" rx="6"/>
+  <text class="flbl" x="705" y="233" text-anchor="middle">Chimeric.out.junction</text>
+
+  <!-- distribution bus from BAM to consumers -->
+  <path class="edge" d="M466,242 L466,262 L91,262 L91,300" marker-end="url(#arr)"/>
+  <path class="edge" d="M466,262 L247,262 L247,300" marker-end="url(#arr)"/>
+  <path class="edge" d="M466,262 L403,262 L403,300" marker-end="url(#arr)"/>
+  <path class="edge" d="M466,262 L559,262 L559,300" marker-end="url(#arr)"/>
+  <path class="edge" d="M466,262 L715,262 L715,300" marker-end="url(#arr)"/>
+  <path class="edge" d="M466,262 L871,262 L871,300" marker-end="url(#arr)"/>
+  <!-- junction to STAR-Fusion -->
+  <path class="edge" d="M705,242 L705,272 L1027,272 L1027,300" marker-end="url(#arr)"/>
+
+  <!-- ===================== CONSUMERS BAND ===================== -->
+  <!-- 7 boxes: x = 20,176,332,488,644,800,956 ; w=142 -->
+  <!-- 1 SAMTOOLS_INDEX -->
+  <rect class="tool2" x="20"  y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="91"  y="322" text-anchor="middle">SAMTOOLS</text>
+  <text class="tlbl" x="91"  y="336" text-anchor="middle">_INDEX</text>
+  <!-- 2 PICARD RnaSeq -->
+  <rect class="tool2" x="176" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="247" y="320" text-anchor="middle">PICARD</text>
+  <text class="tlbl" x="247" y="334" text-anchor="middle">RnaSeqMetrics</text>
+  <!-- 3 PICARD Hs (panel) -->
+  <rect class="tool2" x="332" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="403" y="320" text-anchor="middle">PICARD HsMetrics</text>
+  <text class="star" x="403" y="335" text-anchor="middle">★ panel on-target</text>
+  <!-- 4 RSeQC -->
+  <rect class="tool2" x="488" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="559" y="328" text-anchor="middle">RSeQC ★</text>
+  <!-- 5 featureCounts -->
+  <rect class="tool2" x="644" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="715" y="328" text-anchor="middle">featureCounts</text>
+  <!-- 6 Arriba -->
+  <rect class="tool" x="800" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="871" y="328" text-anchor="middle">Arriba</text>
+  <!-- 7 STAR-Fusion -->
+  <rect class="tool" x="956" y="302" width="142" height="44" rx="7"/>
+  <text class="tlbl" x="1027" y="328" text-anchor="middle">STAR-Fusion</text>
+
+  <!-- consumer output chips y=360 -->
+  <g>
+    <path class="edge" d="M91,346 L91,360"   marker-end="url(#arr)"/>
+    <path class="edge" d="M247,346 L247,360" marker-end="url(#arr)"/>
+    <path class="edge" d="M403,346 L403,360" marker-end="url(#arr)"/>
+    <path class="edge" d="M559,346 L559,360" marker-end="url(#arr)"/>
+    <path class="edge" d="M715,346 L715,360" marker-end="url(#arr)"/>
+    <path class="edge" d="M871,346 L871,360" marker-end="url(#arr)"/>
+    <path class="edge" d="M1027,346 L1027,360" marker-end="url(#arr)"/>
+  </g>
+  <rect class="file" x="22"  y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="91"  y="378" text-anchor="middle">.bai</text>
+  <text class="flbl" x="91"  y="391" text-anchor="middle">.flagstat</text>
+  <rect class="file" x="178" y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="247" y="385" text-anchor="middle">rna_metrics.txt</text>
+  <rect class="file" x="334" y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="403" y="385" text-anchor="middle">hs_metrics.txt</text>
+  <rect class="file" x="490" y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="559" y="378" text-anchor="middle">read_distribution,</text>
+  <text class="flbl" x="559" y="391" text-anchor="middle">geneBody_cov</text>
+  <rect class="final" x="646" y="362" width="138" height="40" rx="6"/>
+  <text class="fnl"  x="715" y="378" text-anchor="middle">counts.txt</text>
+  <text class="flbl" x="715" y="391" text-anchor="middle">(+ .summary)</text>
+  <rect class="file" x="802" y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="871" y="385" text-anchor="middle">arriba.fusions.tsv</text>
+  <rect class="file" x="958" y="362" width="138" height="40" rx="6"/>
+  <text class="flbl" x="1027" y="385" text-anchor="middle">starfusion.fusions.tsv</text>
+
+  <!-- .bai joins back to picard/rseqc (annotation) -->
+  <text class="cap" x="91" y="416" text-anchor="middle">.bai joins BAM →</text>
+  <text class="cap" x="91" y="428" text-anchor="middle">Picard / RSeQC</text>
+
+  <!-- QC bus into MultiQC -->
+  <path class="edge" d="M247,402 L247,470" marker-end="url(#arr)"/>
+  <path class="edge" d="M403,402 L403,470" marker-end="url(#arr)"/>
+  <path class="edge" d="M559,402 L490,470" marker-end="url(#arr)"/>
+  <path class="edge" d="M715,402 L640,440 L470,440 L300,470" marker-end="url(#arr)"/>
+
+  <!-- fusion outputs into MERGE -->
+  <path class="edge" d="M871,402 L900,470" marker-end="url(#arr)"/>
+  <path class="edge" d="M1027,402 L990,470" marker-end="url(#arr)"/>
+
+  <!-- ===================== BOTTOM CONVERGENCE ===================== -->
+  <!-- MULTIQC -->
+  <rect class="tool" x="20" y="472" width="600" height="56" rx="8"/>
+  <text class="tlbl" x="320" y="494" text-anchor="middle">MULTIQC  —  one aggregated QC report</text>
+  <text class="tsub" x="320" y="510" text-anchor="middle">consumes: fastqc.zip · fastp.json · STAR Log.final · rna_metrics · hs_metrics · RSeQC · featureCounts.summary</text>
+  <path class="edge" d="M320,528 L320,548" marker-end="url(#arr)"/>
+  <rect class="final" x="180" y="550" width="280" height="30" rx="7"/>
+  <text class="fnl" x="320" y="569" text-anchor="middle">multiqc_report.html</text>
+
+  <!-- MERGE_FUSIONS -->
+  <rect class="tool" x="800" y="472" width="298" height="56" rx="8"/>
+  <text class="tlbl" x="949" y="495" text-anchor="middle">MERGE_FUSIONS</text>
+  <text class="tsub" x="949" y="511" text-anchor="middle">merge_fusions.py — reconcile + rank ≥2 callers</text>
+  <path class="edge" d="M949,528 L949,548" marker-end="url(#arr)"/>
+  <rect class="final" x="812" y="550" width="274" height="30" rx="7"/>
+  <text class="fnl" x="949" y="569" text-anchor="middle">fusions.reported.tsv</text>
+
+  <!-- ===================== LEGEND ===================== -->
+  <rect class="tool"  x="20"  y="610" width="16" height="14" rx="3"/>
+  <text class="cap"   x="42"  y="621">tool / process</text>
+  <rect class="file"  x="170" y="610" width="16" height="14" rx="3"/>
+  <text class="cap"   x="192" y="621">file written</text>
+  <rect class="final" x="300" y="610" width="16" height="14" rx="3"/>
+  <text class="cap"   x="322" y="621">final deliverable</text>
+  <text class="star"  x="450" y="621">★</text>
+  <text class="cap"   x="462" y="621">targeted-panel-specific step</text>
+</svg>
+
+<div class="note">
+<b>How to read it:</b> the linear core (top) is <code>samplesheet → FASTP/FASTQC → STAR</code>. STAR's
+<code>Aligned…bam</code> is the hub: it fans out to indexing, two Picard metrics, RSeQC, featureCounts and Arriba.
+STAR's <code>Chimeric.out.junction</code> feeds STAR-Fusion. The two fusion tables converge in
+<code>MERGE_FUSIONS</code> → <code>fusions.reported.tsv</code>; every QC file converges in <code>MULTIQC</code> →
+<code>multiqc_report.html</code>. <code>counts.txt</code> is your expression matrix. ★ marks the panel-aware
+on-target steps (Picard HsMetrics over your bait/target intervals, RSeQC over the panel BED).
+</div>
+</div>
+</body>
+</html>

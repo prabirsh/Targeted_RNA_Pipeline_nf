@@ -1,0 +1,4 @@
+sample,fastq_1,fastq_2,strandedness
+TUMOR_001,/data/fastq/TUMOR_001_R1.fastq.gz,/data/fastq/TUMOR_001_R2.fastq.gz,reverse
+TUMOR_002,/data/fastq/TUMOR_002_R1.fastq.gz,/data/fastq/TUMOR_002_R2.fastq.gz,reverse
+FUSION_POS_CTRL,/data/fastq/FUSION_POS_CTRL_R1.fastq.gz,/data/fastq/FUSION_POS_CTRL_R2.fastq.gz,reverse

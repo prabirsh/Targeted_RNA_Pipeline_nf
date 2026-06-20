@@ -1,0 +1,34 @@
+# Conda environment to install/run the RNA panel pipeline on any system.
+#   conda env create -f environment.yml
+#   conda activate rna-panel-pipeline
+# (Nextflow then pulls per-process containers; this env also lets you run tools directly.)
+name: rna-panel-pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  # workflow engine
+  - nextflow=23.10.1
+  # QC / trimming
+  - fastqc=0.12.1
+  - fastp=0.23.4
+  - multiqc=1.21
+  # alignment + BAM
+  - star=2.7.11b
+  - samtools=1.20
+  - picard=3.1.1
+  # coverage / metrics
+  - mosdepth=0.3.8
+  - rseqc=5.0.3
+  # expression
+  - subread=2.0.6            # provides featureCounts
+  # fusion detection
+  - arriba=2.4.0
+  - star-fusion=1.13.0
+  # helper libs
+  - pandas=2.2.2
+  - pip:
+      - []
