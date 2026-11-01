@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Always use LF: scripts in bin/ fail on Linux if their first line ends in CRLF.
+* text=auto eol=lf
