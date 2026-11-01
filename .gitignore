@@ -11,3 +11,10 @@ data/
 *.fastq.gz
 *.fq.gz
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.nf-test/
+
+# local analysis output, not part of the pipeline
+graphify-out/
+PROJECT_CHANGES.md

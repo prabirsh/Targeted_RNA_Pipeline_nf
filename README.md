@@ -24,7 +24,7 @@ references, and it runs sample QC, alignment, **panel coverage QC**, **gene-fusi
 | `panel2` | `panel2.bed` |  exome |
 | `panel1`  | `panel1.bed` |  RNA Fusion (GRCh37) |
 
-`run.sh` **asks** which panel at launch; or pass `--panel panel1|panel2` (or `--panel_bed <file>`).
+Pass `--panel panel1|panel2` (or `--panel_bed <file>`).
 Run with no panel → the pipeline stops and lists the options (never guesses).
 
 ## Install (any system)
@@ -38,8 +38,6 @@ Nextflow then pulls per-process containers (or use the conda tools directly).
 ## Run
 
 ```bash
-./run.sh samplesheet.csv results        # interactive: asks for the panel
-# or non-interactive:
 nextflow run main.nf -profile docker \
   --input samplesheet.csv --outdir results --panel panel1 \
   --star_index /refs/star_index --gtf /refs/annotation.gtf --fasta /refs/genome.fa \
@@ -68,14 +66,6 @@ files, and keep contig naming consistent across all references. No code changes 
 ```csv
 sample,fastq_1,fastq_2,strandedness
 TUMOR_001,/data/TUMOR_001_R1.fastq.gz,/data/TUMOR_001_R2.fastq.gz,reverse
-```
-
-## Version control
-
-`environment.yml`, `VERSION`, `CHANGELOG.md`, `.gitignore` and `.gitattributes` are included.
-Initialise the repo on your machine:
-```bash
-bash scripts/git_init.sh     # git init + first commit + tag v1.1.0
 ```
 
 ## Output layout
