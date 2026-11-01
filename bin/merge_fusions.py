@@ -1,93 +1,189 @@
 #!/usr/bin/env python3
 """
-Reconcile fusion calls from Arriba and STAR-Fusion into one ranked, clinical table.
+Reconcile Arriba and STAR-Fusion calls into one ranked table of fusion events.
 
-For every fusion we report:
-  - gene pair (left -- right)
-  - LEFT breakpoint and RIGHT breakpoint (genomic coordinates)
-  - split-read and spanning-read support
-  - which callers found it and how many
-  - the supporting READ NAMES (so a reviewer can inspect the exact reads)
+An event is one breakpoint pair for an ordered 5'--3' gene pair. Every breakpoint
+keeps its own row. Two callers agree only when the gene order matches and both
+breakpoints fall within --breakpoint-window bases.
 
-Strategy: normalise each gene pair to an unordered key, union the calls, attach
-evidence, rank by caller count then read support. 'reported' = calls promoted by
-the rule (>=2 callers, or a single high-confidence Arriba call).
+Both callers read the same alignments, so support is never summed across them.
+total_support is the number of unique read names. If a caller reports support
+without read names, it is the larger caller's count instead, and support_source
+records which method was used. Per-caller counts are always kept.
+
+'reported' holds events found by at least --min-callers callers, or a single
+high-confidence Arriba call.
 """
 import argparse
 import csv
+import re
 import sys
 
+FIELDS = [
+    "sample", "fusion", "left_breakpoint", "right_breakpoint", "callers", "n_callers",
+    "total_support", "support_source", "arriba_split", "arriba_span", "sf_split", "sf_span",
+    "arriba_confidence", "type", "starfusion_ffpm", "n_read_names", "read_names",
+]
 
-def norm_pair(a, b):
-    return "--".join(sorted([a.strip(), b.strip()]))
 
-
-def to_int(x, default=0):
+def to_int(value, default=0):
     try:
-        return int(float(x))
+        return int(float(value))
     except (ValueError, TypeError):
         return default
 
 
+def parse_breakpoint(value):
+    """'chr1:100' or 'chr1:100:+' -> ('chr1', 100). Returns None if unparseable."""
+    parts = (value or "").strip().split(":")
+    if len(parts) < 2 or not parts[1].isdigit():
+        return None
+    return parts[0], int(parts[1])
+
+
 def split_reads(field):
+    """Read names from a comma or semicolon list, in a form comparable across callers."""
     if not field or field in (".", "NA"):
         return set()
-    return {r for r in field.replace(";", ",").split(",") if r and r != "."}
+    names = set()
+    for name in re.split(r"[,;]", field):
+        name = re.sub(r"/[12]$", "", name.strip().lstrip("@"))
+        if name and name != ".":
+            names.add(name)
+    return names
+
+
+def read_rows(path):
+    if not path:
+        return []
+    with open(path, newline="") as fh:
+        return list(csv.DictReader(fh, delimiter="\t", quoting=csv.QUOTE_NONE))
 
 
 def parse_arriba(path):
-    out = {}
-    if not path:
-        return out
-    with open(path, newline="") as fh:
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            g1 = row.get("#gene1") or row.get("gene1")
-            g2 = row.get("gene2")
-            if not g1 or not g2:
-                continue
-            key = norm_pair(g1, g2)
-            split = to_int(row.get("split_reads1")) + to_int(row.get("split_reads2"))
-            span = to_int(row.get("discordant_mates"))
-            reads = split_reads(row.get("read_identifiers", ""))
-            out[key] = {
-                "left": row.get("breakpoint1", ""),
-                "right": row.get("breakpoint2", ""),
-                "arriba_split": split,
-                "arriba_span": span,
-                "confidence": row.get("confidence", ""),
-                "type": row.get("type", ""),
-                "reads": reads,
-            }
-    return out
+    events = []
+    for row in read_rows(path):
+        gene1 = row.get("#gene1") or row.get("gene1")
+        gene2 = row.get("gene2")
+        if not gene1 or not gene2:
+            continue
+        events.append({
+            "gene5": gene1.strip(),
+            "gene3": gene2.strip(),
+            "left": row.get("breakpoint1", ""),
+            "right": row.get("breakpoint2", ""),
+            "split": to_int(row.get("split_reads1")) + to_int(row.get("split_reads2")),
+            "span": to_int(row.get("discordant_mates")),
+            "confidence": row.get("confidence", ""),
+            "type": row.get("type", ""),
+            "reads": split_reads(row.get("read_identifiers", "")),
+        })
+    return events
 
 
 def parse_starfusion(path):
-    out = {}
-    if not path:
-        return out
-    with open(path, newline="") as fh:
-        reader = csv.DictReader(fh, delimiter="\t")
-        for row in reader:
-            name = row.get("#FusionName") or row.get("FusionName")
-            if not name or "--" not in name:
-                continue
-            g1, g2 = name.split("--")[:2]
-            key = norm_pair(g1, g2)
-            reads = split_reads(row.get("JunctionReads", "")) | split_reads(row.get("SpanningFrags", ""))
-            out[key] = {
-                "left": row.get("LeftBreakpoint", ""),
-                "right": row.get("RightBreakpoint", ""),
-                "sf_split": to_int(row.get("JunctionReadCount")),
-                "sf_span": to_int(row.get("SpanningFragCount")),
-                "ffpm": row.get("FFPM", ""),
-                "reads": reads,
-            }
-    return out
+    events = []
+    for row in read_rows(path):
+        name = row.get("#FusionName") or row.get("FusionName")
+        if not name or "--" not in name:
+            continue
+        gene5, gene3 = name.split("--")[:2]
+        events.append({
+            "gene5": gene5.strip(),
+            "gene3": gene3.strip(),
+            "left": row.get("LeftBreakpoint", ""),
+            "right": row.get("RightBreakpoint", ""),
+            "split": to_int(row.get("JunctionReadCount")),
+            "span": to_int(row.get("SpanningFragCount")),
+            "ffpm": row.get("FFPM", ""),
+            "reads": split_reads(row.get("JunctionReads", ""))
+            | split_reads(row.get("SpanningFrags", "")),
+        })
+    return events
+
+
+def breakpoint_distance(a, b):
+    """Largest distance between matching breakpoints, or None if the events can't agree."""
+    if (a["gene5"], a["gene3"]) != (b["gene5"], b["gene3"]):
+        return None
+    a_left, a_right = parse_breakpoint(a["left"]), parse_breakpoint(a["right"])
+    b_left, b_right = parse_breakpoint(b["left"]), parse_breakpoint(b["right"])
+    if not all((a_left, a_right, b_left, b_right)):
+        return None
+    if a_left[0] != b_left[0] or a_right[0] != b_right[0]:
+        return None
+    return max(abs(a_left[1] - b_left[1]), abs(a_right[1] - b_right[1]))
+
+
+def pair_events(arriba, starfusion, window):
+    """Pair each Arriba event with at most one STAR-Fusion event, closest first."""
+    candidates = []
+    for a_index, a in enumerate(arriba):
+        for s_index, s in enumerate(starfusion):
+            distance = breakpoint_distance(a, s)
+            if distance is not None and distance <= window:
+                candidates.append((distance, a_index, s_index))
+
+    a_used, s_used, pairs = set(), set(), []
+    for _, a_index, s_index in sorted(candidates):
+        if a_index not in a_used and s_index not in s_used:
+            a_used.add(a_index)
+            s_used.add(s_index)
+            pairs.append((arriba[a_index], starfusion[s_index]))
+
+    pairs += [(a, None) for i, a in enumerate(arriba) if i not in a_used]
+    pairs += [(None, s) for i, s in enumerate(starfusion) if i not in s_used]
+    return pairs
+
+
+def caller_total(event):
+    return event["split"] + event["span"]
+
+
+def support(a, s):
+    """Return (total_support, support_source) without counting shared reads twice."""
+    callers = [event for event in (a, s) if event]
+    if all(event["reads"] or caller_total(event) == 0 for event in callers):
+        return len(set().union(*(event["reads"] for event in callers))), "unique_read_names"
+    return max(caller_total(event) for event in callers), "caller_max"
+
+
+def build_record(sample, a, s, max_readnames):
+    event = a or s
+    callers = [name for name, found in (("arriba", a), ("starfusion", s)) if found]
+    total, source = support(a, s)
+    reads = sorted(set().union(*(e["reads"] for e in (a, s) if e)))
+    return {
+        "sample": sample,
+        "fusion": f"{event['gene5']}--{event['gene3']}",
+        "left_breakpoint": event["left"],
+        "right_breakpoint": event["right"],
+        "callers": ",".join(callers),
+        "n_callers": len(callers),
+        "total_support": total,
+        "support_source": source,
+        "arriba_split": a["split"] if a else 0,
+        "arriba_span": a["span"] if a else 0,
+        "sf_split": s["split"] if s else 0,
+        "sf_span": s["span"] if s else 0,
+        "arriba_confidence": a["confidence"] if a else "",
+        "type": a["type"] if a else "",
+        "starfusion_ffpm": s["ffpm"] if s else "",
+        "n_read_names": len(reads),
+        "read_names": ",".join(reads[:max_readnames]) if reads else ".",
+    }
+
+
+def write_table(path, rows):
+    with open(path, "w", newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=FIELDS, delimiter="\t",
+                                quoting=csv.QUOTE_NONE, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sample", required=True)
     ap.add_argument("--arriba", required=True)
     ap.add_argument("--starfusion", default=None)
@@ -95,69 +191,28 @@ def main():
     ap.add_argument("--reported", required=True)
     ap.add_argument("--min-callers", type=int, default=2)
     ap.add_argument("--max-readnames", type=int, default=50)
+    ap.add_argument("--breakpoint-window", type=int, default=10)
     args = ap.parse_args()
 
-    arriba = parse_arriba(args.arriba)
-    starf = parse_starfusion(args.starfusion)
+    # Read-name columns grow with support and can exceed the csv module's default limit.
+    csv.field_size_limit(sys.maxsize)
 
-    records = []
-    for key in set(arriba) | set(starf):
-        a = arriba.get(key, {})
-        s = starf.get(key, {})
-        callers = []
-        if a:
-            callers.append("arriba")
-        if s:
-            callers.append("starfusion")
-        split = a.get("arriba_split", 0) + s.get("sf_split", 0)
-        span = a.get("arriba_span", 0) + s.get("sf_span", 0)
-        reads = sorted(a.get("reads", set()) | s.get("reads", set()))
-        reads_capped = reads[:args.max_readnames]
-        rec = {
-            "sample": args.sample,
-            "fusion": key,
-            "left_breakpoint": a.get("left") or s.get("left", ""),
-            "right_breakpoint": a.get("right") or s.get("right", ""),
-            "split_reads": split,
-            "spanning_reads": span,
-            "total_support": split + span,
-            "callers": ",".join(callers),
-            "n_callers": len(callers),
-            "arriba_confidence": a.get("confidence", ""),
-            "type": a.get("type", ""),
-            "starfusion_ffpm": s.get("ffpm", ""),
-            "n_read_names": len(reads),
-            "read_names": ",".join(reads_capped) if reads_capped else ".",
-        }
-        records.append(rec)
+    pairs = pair_events(parse_arriba(args.arriba), parse_starfusion(args.starfusion),
+                        args.breakpoint_window)
+    records = [build_record(args.sample, a, s, args.max_readnames) for a, s in pairs]
+    records.sort(key=lambda r: (-r["n_callers"], -r["total_support"], r["fusion"],
+                                r["left_breakpoint"], r["right_breakpoint"]))
 
-    records.sort(key=lambda r: (r["n_callers"], r["total_support"]), reverse=True)
+    def promoted(record):
+        return (record["n_callers"] >= args.min_callers
+                or record["arriba_confidence"].lower() == "high")
 
-    fields = ["sample", "fusion", "left_breakpoint", "right_breakpoint",
-              "split_reads", "spanning_reads", "total_support", "callers",
-              "n_callers", "arriba_confidence", "type", "starfusion_ffpm",
-              "n_read_names", "read_names"]
-
-    def write(path, rows):
-        with open(path, "w", newline="") as out:
-            w = csv.DictWriter(out, fieldnames=fields, delimiter="\t")
-            w.writeheader()
-            for r in rows:
-                w.writerow(r)
-
-    def promote(r):
-        if r["n_callers"] >= args.min_callers:
-            return True
-        if "arriba" in r["callers"] and r["arriba_confidence"].lower() == "high":
-            return True
-        return False
-
-    write(args.merged, records)
-    write(args.reported, [r for r in records if promote(r)])
+    reported = [r for r in records if promoted(r)]
+    write_table(args.merged, records)
+    write_table(args.reported, reported)
 
     sys.stderr.write(
-        "[merge_fusions] %s: %d pairs, %d reported\n"
-        % (args.sample, len(records), sum(1 for r in records if promote(r)))
+        f"[merge_fusions] {args.sample}: {len(records)} events, {len(reported)} reported\n"
     )
 
 
