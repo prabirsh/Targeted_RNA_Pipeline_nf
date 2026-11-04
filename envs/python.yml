@@ -1,0 +1,7 @@
+# python, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-python
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12

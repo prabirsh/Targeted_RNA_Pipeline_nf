@@ -1,0 +1,7 @@
+# rseqc, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-rseqc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - rseqc=5.0.6

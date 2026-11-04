@@ -13,6 +13,7 @@ process MOSDEPTH {
     tuple val(meta), path("*.thresholds.bed.gz"),           emit: thresholds
     tuple val(meta), path("*.regions.bed.gz"),              emit: regions
     tuple val(meta), path("*.mosdepth.region.dist.txt"),    emit: dist, optional: true
+    tuple val(meta), path("*.mosdepth.global.dist.txt"),    emit: global_dist
 
     script:
     """

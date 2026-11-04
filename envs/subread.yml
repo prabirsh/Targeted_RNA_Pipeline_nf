@@ -1,0 +1,7 @@
+# subread, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-subread
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - subread=2.1.1

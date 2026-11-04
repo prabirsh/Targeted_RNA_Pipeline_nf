@@ -7,6 +7,8 @@ process PICARD_HSMETRICS {
     input:
     tuple val(meta), path(bam), path(bai)
     path  fasta
+    path  fasta_fai
+    path  fasta_dict
     path  panel_intervals
 
     output:

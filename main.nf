@@ -1,12 +1,11 @@
 #!/usr/bin/env nextflow
 /*
 ========================================================================================
-    RNA Panel Pipeline  —  targeted-panel transcriptome analysis (DRAGEN-RNA-style)
-    Clinical FFPE RNA, exome / targeted panel, fusion + expression + coverage QC
+    RNA Panel Pipeline: targeted-panel RNA analysis
+    QC, alignment, panel coverage, fusion detection and expression.
+    Research use. Not validated for clinical decisions.
 ========================================================================================
 */
-
-nextflow.enable.dsl = 2
 
 include { CHECK_SAMPLESHEET    } from './modules/local/check_samplesheet.nf'
 include { FASTQC               } from './modules/local/fastqc.nf'
@@ -28,142 +27,162 @@ include { FEATURECOUNTS        } from './modules/local/featurecounts.nf'
 include { MULTIQC              } from './modules/local/multiqc.nf'
 
 def helpMessage() {
-    log.info """
-    ============================================================
-     RNA PANEL PIPELINE  v1.1  (clinical FFPE RNA targeted panel)
-    ============================================================
+    return """
+    RNA Panel Pipeline v${workflow.manifest.version}
+
     Usage:
       nextflow run main.nf -profile docker \\
-        --input samplesheet.csv --outdir results \\
-        --panel ST8 \\
-        --star_index /refs/star_index --gtf /refs/annotation.gtf --fasta /refs/genome.fa \\
-        --refflat /refs/refFlat.txt --rrna_intervals /refs/rRNA.interval_list \\
-        --ctat_lib /refs/ctat_genome_lib \\
-        --arriba_blacklist /refs/arriba/blacklist.tsv.gz
+        --input samplesheet.csv --outdir results --panel panel.bed \\
+        --star_index /refs/star_index --gtf /refs/annotation.gtf --fasta /refs/genome.fa
 
-    Panel (required): --panel ST8 | CT     (or --panel_bed <file.bed> to override)
-      ST8 = SureSelect XT V8 exome panel
-      CT  = Indiegene 4baseCare RNA Fusion panel (GRCh37)
+    Required:
+      --input             Samplesheet CSV: sample,fastq_1,fastq_2,strandedness
+      --panel             BED file of the panel's target regions
+      --star_index        STAR index directory
+      --gtf               Annotation GTF
+      --fasta             Genome FASTA, with .fai and .dict beside it
 
-    Required references: --star_index --gtf --fasta
-    Optional: --dict (else built from --fasta), --refflat, --rrna_intervals,
-              --ctat_lib, --arriba_* , --gene_bed (RSeQC), --skip_fusion, --skip_rseqc
+    Optional:
+      --outdir            Results directory (default: results)
+      --refflat           refFlat file; without it, CollectRnaSeqMetrics is skipped
+      --rrna_intervals    Ribosomal interval_list for CollectRnaSeqMetrics
+      --gene_bed          BED12 gene model; without it, RSeQC is skipped
+      --ctat_lib          CTAT library; without it, STAR-Fusion is skipped
+      --arriba_blacklist, --arriba_known, --arriba_protein    Arriba reference files
+      --skip_fusion, --skip_rseqc
+
+    Profiles: docker, singularity, conda, slurm, awsbatch, test
     """.stripIndent()
 }
 
-if (params.help) { helpMessage(); exit 0 }
-
-// ---- fail fast --------------------------------------------------------------
-def requireParam = { name, value ->
-    if (!value) { log.error "ERROR: missing required parameter --${name}. Run with --help."; exit 1 }
+def requireParam(name, value) {
+    if (!value) {
+        error "Missing required parameter --${name}. Run with --help for usage."
+    }
 }
-requireParam('input',      params.input)
-requireParam('star_index', params.star_index)
-requireParam('gtf',        params.gtf)
-requireParam('fasta',      params.fasta)
-
-// ---- resolve the panel (the 'which panel?' decision) ------------------------
-def panel_bed_path = params.panel_bed ?: (params.panel ? params.panels[params.panel] : null)
-if (!panel_bed_path) {
-    log.error "No panel selected. Use --panel <NAME> (one of: ${params.panels.keySet().join(', ')}) or --panel_bed <file.bed>."
-    exit 1
-}
-def panel_name = params.panel ?: file(panel_bed_path).baseName
-log.info "PANEL: ${panel_name}  ->  ${panel_bed_path}"
 
 workflow {
+    main:
+    if (params.help) {
+        log.info helpMessage()
+        exit(0)
+    }
 
-    log.info "RNA PANEL PIPELINE v1.1  |  input=${params.input}  |  panel=${panel_name}  |  outdir=${params.outdir}"
+    requireParam('input',      params.input)
+    requireParam('panel',      params.panel)
+    requireParam('star_index', params.star_index)
+    requireParam('gtf',        params.gtf)
+    requireParam('fasta',      params.fasta)
 
-    ch_panel_bed = file(panel_bed_path, checkIfExists: true)
+    def panel_bed  = file(params.panel, checkIfExists: true)
+    def panel_name = panel_bed.baseName
+    def fasta      = file(params.fasta, checkIfExists: true)
+    def gtf        = file(params.gtf, checkIfExists: true)
+    def fasta_fai  = file("${params.fasta}.fai", checkIfExists: true)
+    def fasta_dict = params.dict
+        ? file(params.dict, checkIfExists: true)
+        : file("${fasta.parent}/${fasta.baseName}.dict")
 
-    // Stage 0: samplesheet -> read channel
-    CHECK_SAMPLESHEET(Channel.fromPath(params.input, checkIfExists: true))
+    log.info "RNA Panel Pipeline v${workflow.manifest.version} | input=${params.input} | panel=${panel_name} | outdir=${params.outdir}"
+
+    // Samplesheet -> read channel
+    CHECK_SAMPLESHEET(channel.fromPath(params.input, checkIfExists: true))
     ch_reads = CHECK_SAMPLESHEET.out.csv
         .splitCsv(header: true)
         .map { row ->
-            def meta = [ id: row.sample,
-                         single_end: (row.fastq_2 == null || row.fastq_2 == ''),
-                         strandedness: (row.strandedness ?: 'reverse'),
-                         panel: panel_name ]
-            def fastqs = meta.single_end ?
-                [ file(row.fastq_1, checkIfExists: true) ] :
-                [ file(row.fastq_1, checkIfExists: true), file(row.fastq_2, checkIfExists: true) ]
+            def single_end = !row.fastq_2
+            def meta = [
+                id: row.sample,
+                single_end: single_end,
+                strandedness: row.strandedness ?: 'reverse',
+                panel: panel_name,
+            ]
+            def fastqs = single_end
+                ? [file(row.fastq_1, checkIfExists: true)]
+                : [file(row.fastq_1, checkIfExists: true), file(row.fastq_2, checkIfExists: true)]
             tuple(meta, fastqs)
         }
 
-    // Stage 1: raw QC + trim
+    // Raw QC and trimming
     FASTQC(ch_reads)
     FASTP(ch_reads)
 
-    // Stage 2: STAR 2-pass
-    STAR_ALIGN(FASTP.out.reads, file(params.star_index), file(params.gtf))
+    // Alignment
+    STAR_ALIGN(FASTP.out.reads, file(params.star_index, checkIfExists: true), gtf)
     SAMTOOLS_INDEX(STAR_ALIGN.out.bam)
     ch_bam = STAR_ALIGN.out.bam.join(SAMTOOLS_INDEX.out.bai)
 
-    // Panel -> interval_list (needs a sequence dictionary)
-    ch_dict = params.dict ? Channel.value(file(params.dict)) : SEQUENCE_DICT(file(params.fasta)).dict
-    PANEL_TO_INTERVALS(ch_panel_bed, ch_dict)
+    // The dictionary is built from the FASTA if it is not already present.
+    ch_dict = fasta_dict.exists()
+        ? channel.value(fasta_dict)
+        : SEQUENCE_DICT(fasta).dict
+    PANEL_TO_INTERVALS(panel_bed, ch_dict)
 
-    // Stage 3: post-alignment + panel QC
-    PICARD_RNASEQMETRICS(ch_bam, file(params.refflat), file(params.rrna_intervals))
-    PICARD_HSMETRICS(ch_bam, file(params.fasta), PANEL_TO_INTERVALS.out.intervals)
-    PICARD_INSERTSIZE(ch_bam)
+    // Post-alignment and panel QC
+    ch_rnaseq_metrics = channel.empty()
+    if (params.refflat) {
+        PICARD_RNASEQMETRICS(
+            ch_bam,
+            file(params.refflat, checkIfExists: true),
+            params.rrna_intervals ? file(params.rrna_intervals, checkIfExists: true) : []
+        )
+        ch_rnaseq_metrics = PICARD_RNASEQMETRICS.out.metrics
+    }
+    PICARD_HSMETRICS(ch_bam, fasta, fasta_fai, ch_dict, PANEL_TO_INTERVALS.out.intervals)
+    PICARD_INSERTSIZE(ch_bam.filter { meta, _bam, _bai -> !meta.single_end })
 
-    // Coverage @50/100/200/500/1000x over the panel
-    MOSDEPTH(ch_bam, ch_panel_bed)
-    ch_cov_in = MOSDEPTH.out.thresholds
-        .join(MOSDEPTH.out.summary)
-        .join(SAMTOOLS_INDEX.out.flagstat)
-    COVERAGE_SUMMARY(ch_cov_in)
+    MOSDEPTH(ch_bam, panel_bed)
+    COVERAGE_SUMMARY(
+        MOSDEPTH.out.thresholds
+            .join(MOSDEPTH.out.summary)
+            .join(SAMTOOLS_INDEX.out.flagstat)
+    )
 
-    ch_rseqc = Channel.empty()
+    ch_rseqc = channel.empty()
     if (!params.skip_rseqc && params.gene_bed) {
-        RSEQC(ch_bam, file(params.gene_bed))
+        RSEQC(ch_bam, file(params.gene_bed, checkIfExists: true))
         ch_rseqc = RSEQC.out.reports
     }
 
-    // Stage 4: expression
-    FEATURECOUNTS(STAR_ALIGN.out.bam, file(params.gtf))
+    // Expression
+    FEATURECOUNTS(STAR_ALIGN.out.bam, gtf)
 
-    // Stage 5: ensemble fusion (breakpoints + read support + read names)
+    // Fusions
     if (!params.skip_fusion) {
         ARRIBA(
-            STAR_ALIGN.out.bam, file(params.fasta), file(params.gtf),
-            params.arriba_blacklist ? file(params.arriba_blacklist) : [],
-            params.arriba_known     ? file(params.arriba_known)     : [],
-            params.arriba_protein   ? file(params.arriba_protein)   : []
+            STAR_ALIGN.out.bam, fasta, gtf,
+            params.arriba_blacklist ? file(params.arriba_blacklist, checkIfExists: true) : [],
+            params.arriba_known     ? file(params.arriba_known, checkIfExists: true)     : [],
+            params.arriba_protein   ? file(params.arriba_protein, checkIfExists: true)   : []
         )
         if (params.ctat_lib) {
-            STARFUSION(STAR_ALIGN.out.chimeric_junction, file(params.ctat_lib))
+            STARFUSION(STAR_ALIGN.out.chimeric_junction, file(params.ctat_lib, checkIfExists: true))
             MERGE_FUSIONS(ARRIBA.out.fusions.join(STARFUSION.out.fusions), true)
-        } else {
-            MERGE_FUSIONS(ARRIBA.out.fusions.map { meta, a -> tuple(meta, a, []) }, false)
+        }
+        else {
+            MERGE_FUSIONS(ARRIBA.out.fusions.map { meta, arriba -> tuple(meta, arriba, []) }, false)
         }
     }
 
-    // Stage 9: aggregate QC
-    ch_multiqc = Channel.empty()
-        .mix( FASTQC.out.zip.map { meta, f -> f } )
-        .mix( FASTP.out.json.map { meta, f -> f } )
-        .mix( STAR_ALIGN.out.log_final.map { meta, f -> f } )
-        .mix( PICARD_RNASEQMETRICS.out.metrics.map { meta, f -> f } )
-        .mix( PICARD_HSMETRICS.out.metrics.map { meta, f -> f } )
-        .mix( PICARD_INSERTSIZE.out.metrics.map { meta, f -> f } )
-        .mix( MOSDEPTH.out.summary.map { meta, f -> f } )
-        .mix( COVERAGE_SUMMARY.out.mqc.map { meta, f -> f } )
-        .mix( ch_rseqc.map { meta, f -> f }.flatten() )
-        .mix( FEATURECOUNTS.out.summary.map { meta, f -> f } )
+    // Aggregate QC
+    ch_multiqc = channel.empty()
+        .mix(FASTQC.out.zip.map { _meta, f -> f }.flatten())
+        .mix(FASTP.out.json.map { _meta, f -> f })
+        .mix(STAR_ALIGN.out.log_final.map { _meta, f -> f })
+        .mix(ch_rnaseq_metrics.map { _meta, f -> f })
+        .mix(PICARD_HSMETRICS.out.metrics.map { _meta, f -> f })
+        .mix(PICARD_INSERTSIZE.out.metrics.map { _meta, f -> f })
+        .mix(MOSDEPTH.out.summary.map { _meta, f -> f })
+        .mix(MOSDEPTH.out.global_dist.map { _meta, f -> f })
+        .mix(MOSDEPTH.out.dist.map { _meta, f -> f })
+        .mix(COVERAGE_SUMMARY.out.mqc.map { _meta, f -> f })
+        .mix(ch_rseqc.map { _meta, f -> f }.flatten())
+        .mix(FEATURECOUNTS.out.summary.map { _meta, f -> f })
         .collect()
 
     MULTIQC(ch_multiqc, file("${projectDir}/assets/multiqc_config.yml"))
-}
 
-workflow.onComplete {
-    log.info "============================================================"
-    log.info " Pipeline complete: ${ workflow.success ? 'SUCCESS' : 'FAILED' }"
-    log.info " Panel:   ${panel_name}"
-    log.info " Results: ${params.outdir}"
-    log.info " Report:  ${params.outdir}/multiqc/multiqc_report.html"
-    log.info "============================================================"
+    workflow.onComplete = {
+        log.info "Pipeline ${workflow.success ? 'succeeded' : 'FAILED'}. Results: ${params.outdir}"
+    }
 }

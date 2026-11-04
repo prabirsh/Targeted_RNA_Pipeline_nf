@@ -1,0 +1,7 @@
+# fastp, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-fastp
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - fastp=1.4.0

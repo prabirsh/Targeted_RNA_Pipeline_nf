@@ -1,0 +1,7 @@
+# fastqc, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-fastqc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - fastqc=0.13.0

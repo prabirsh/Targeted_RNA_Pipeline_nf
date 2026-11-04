@@ -1,0 +1,7 @@
+# samtools, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-samtools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - samtools=1.25

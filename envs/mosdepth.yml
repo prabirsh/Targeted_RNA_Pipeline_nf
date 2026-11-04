@@ -1,0 +1,7 @@
+# mosdepth, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-mosdepth
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - mosdepth=0.3.14

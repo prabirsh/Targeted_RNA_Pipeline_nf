@@ -1,0 +1,7 @@
+# star-fusion, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-star-fusion
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - star-fusion=1.15.1

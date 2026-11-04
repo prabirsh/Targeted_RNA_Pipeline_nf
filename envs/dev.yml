@@ -1,0 +1,14 @@
+# Development and test tools.
+#   conda env create -f envs/dev.yml
+name: rna-panel-dev
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - pytest
+  - ruff
+  - openjdk=17
+  - nextflow=26.10.4
+  - nf-test
+  - multiqc=1.35

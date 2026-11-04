@@ -1,0 +1,7 @@
+# picard, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-picard
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - picard=3.5.0

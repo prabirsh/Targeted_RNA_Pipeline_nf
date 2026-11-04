@@ -1,0 +1,7 @@
+# arriba, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-arriba
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - arriba=2.5.1

@@ -1,0 +1,7 @@
+# multiqc, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-multiqc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - multiqc=1.35

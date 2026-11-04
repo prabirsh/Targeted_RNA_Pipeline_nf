@@ -1,0 +1,7 @@
+# star, isolated so its dependencies cannot conflict with other tools.
+name: rna-panel-star
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - star=2.7.11b
